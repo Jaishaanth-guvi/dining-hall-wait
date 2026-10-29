@@ -220,11 +220,13 @@ button {
   border: 1px solid transparent;
 }
 
-.stepper button, .counter-actions button {
+.stepper button, .counter-actions button, #shorten {
   background: #9d3412;
   color: #fffaf3;
   padding: 10px 16px;
 }
+
+#shorten { margin-top: 16px; }
 
 .stepper button {
   width: 44px;

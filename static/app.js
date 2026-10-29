@@ -1,19 +1,3 @@
-const HALL = {
-  servicePerMinute: 18,
-  // [start, end) minutes after 11:00, arrivals each minute
-  arrivals: [
-    [0, 25, 10],
-    [25, 40, 18],
-    [40, 70, 34],
-    [70, 90, 16],
-    [90, 130, 8],
-    [130, 180, 6],
-  ],
-};
-
-const QUIET = 10;
-const SHORT = 8;
-
 const waitEl = document.querySelector("#wait-value");
 const waitWrap = document.querySelector(".wait");
 const statusEl = document.querySelector("#wait-status");
@@ -29,13 +13,16 @@ const pairCountEl = document.querySelector("#pair-count");
 const pairLabel = document.querySelector("#pair-label");
 const moveNote = document.querySelector("#move-note");
 const counterNote = document.querySelector("#counter-note");
+const shortenBtn = document.querySelector("#shorten");
+const shortenNote = document.querySelector("#shorten-note");
 const syncEl = document.querySelector("#sync");
 const moveUp = document.querySelector("#move-up");
 const moveDown = document.querySelector("#move-down");
 
-let state = { lineDelta: 0, moves: {}, joined: 0, served: 0 };
+let board = null;
 let shared = false;
 let nowOffset = 70;
+let requestId = 0;
 
 function formatTime(offset) {
   const total = 11 * 60 + offset;
@@ -47,51 +34,6 @@ function formatTime(offset) {
   return `${hour}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 
-function arrivalRate(offset) {
-  for (const [start, end, rate] of HALL.arrivals) {
-    if (offset >= start && offset < end) return rate;
-  }
-  return 0;
-}
-
-function moveEffects(moves) {
-  const out = {};
-  const into = {};
-  for (const [key, count] of Object.entries(moves || {})) {
-    const [from, to] = key.split(":").map(Number);
-    if (!Number.isFinite(from) || !Number.isFinite(to) || count <= 0) continue;
-    out[from] = (out[from] || 0) + count;
-    into[to] = (into[to] || 0) + count;
-  }
-  return { out, into };
-}
-
-function buildSeries(offset, lineDelta, moves) {
-  const { out, into } = moveEffects(moves);
-  const points = [];
-  let queue = 0;
-  for (let minute = 0; minute <= 180; minute += 1) {
-    const arrivals = arrivalRate(minute) + (into[minute] || 0);
-    queue = Math.max(0, queue + arrivals - HALL.servicePerMinute - (out[minute] || 0));
-    if (minute === offset) queue = Math.max(0, queue + lineDelta);
-    points.push({
-      m: minute,
-      queue,
-      wait: queue / HALL.servicePerMinute,
-    });
-  }
-  return points;
-}
-
-function movedTotal(moves) {
-  return Object.values(moves || {}).reduce((sum, count) => sum + Math.max(0, count), 0);
-}
-
-function pairCount(moves, from, to) {
-  if (to == null) return 0;
-  return moves[`${from}:${to}`] || 0;
-}
-
 function paintChart(points, offset, later) {
   const width = 720;
   const height = 220;
@@ -101,7 +43,6 @@ function paintChart(points, offset, later) {
   const maxWait = Math.max(30, ...points.map((point) => point.wait));
   const x = (minute) => pad.l + (minute / 180) * innerW;
   const y = (wait) => pad.t + innerH - (wait / maxWait) * innerH;
-
   const line = points
     .map((point, index) => `${index === 0 ? "M" : "L"}${x(point.m).toFixed(1)},${y(point.wait).toFixed(1)}`)
     .join(" ");
@@ -113,11 +54,8 @@ function paintChart(points, offset, later) {
       return `<text x="${x(minute)}" y="${height - 8}" text-anchor="${minute === 0 ? "start" : minute === 180 ? "end" : "middle"}" class="axis">${label}</text>`;
     })
     .join("");
-
   const laterMark =
-    later == null
-      ? ""
-      : `<circle cx="${x(later)}" cy="${y(points[later].wait)}" r="5" fill="#1c6b43" />`;
+    later == null ? "" : `<circle cx="${x(later)}" cy="${y(points[later].wait)}" r="5" fill="#1c6b43" />`;
 
   chart.innerHTML = `
     <line x1="${pad.l}" y1="${y(20)}" x2="${width - pad.r}" y2="${y(20)}" stroke="#c9b6a2" stroke-dasharray="4 4" />
@@ -131,77 +69,68 @@ function paintChart(points, offset, later) {
   `;
 }
 
-function describe(points, offset) {
-  const current = points[offset];
-  const shown = Math.round(current.wait);
-  const laterPoint = points.find((point) => point.m > offset && point.wait <= SHORT);
-  const saved = laterPoint ? Math.round(current.wait - laterPoint.wait) : 0;
-  const suggestLater = Boolean(laterPoint) && saved >= 10;
-  const level = shown >= 20 ? "long" : shown >= QUIET ? "mid" : "ok";
+function render(view) {
+  board = view;
+  const plan = view.shorten;
+  const shown = view.predictedMinutes;
+  const level = shown >= 20 ? "long" : shown >= 10 ? "mid" : "ok";
   waitWrap.className = `wait ${level}`;
   waitEl.textContent = String(shown);
-  lineEl.textContent = String(Math.round(current.queue));
-  whenEl.textContent = `Today at ${formatTime(offset)}`;
-  clockReadout.textContent = formatTime(offset);
+  lineEl.textContent = String(view.inLine);
+  movedEl.textContent = String(view.studentsWhoSwitched);
+  whenEl.textContent = `Predicted wait at ${view.timeLabel}`;
+  clockReadout.textContent = view.timeLabel;
+  statusEl.textContent = view.status;
+  adviceEl.textContent = plan.advice;
 
-  if (shown >= 20) {
-    statusEl.textContent = "Over 20 minutes. This is the peak.";
-  } else if (shown >= QUIET) {
-    statusEl.textContent = "Busy, and still shorter than a 20-minute wait.";
-  } else {
-    statusEl.textContent = "Short line. Going now is the fast option.";
-  }
-
-  const switched = movedTotal(state.moves);
-  movedEl.textContent = String(switched);
-
-  let advice;
-  let dest = null;
-  if (!suggestLater) {
-    advice =
-      shown >= 20 && !laterPoint
-        ? "The wait stays long until Ridge Hall closes at 2:00 PM."
-        : `The wait is ${shown} min. Going now is the better choice.`;
-  } else {
-    dest = laterPoint.m;
-    const delay = laterPoint.m - offset;
-    advice = `Come at ${formatTime(dest)} instead. The wait falls to ${Math.round(laterPoint.wait)} min, about ${saved} min less in line. Lunch starts ${delay} min later.`;
-  }
-
-  adviceEl.textContent = advice;
-  const count = pairCount(state.moves, offset, dest);
+  const dest = plan.show ? plan.to : null;
+  const count = plan.switchingNow || 0;
   pairCountEl.textContent = String(count);
   const people = count === 1 ? "student" : "students";
-  pairLabel.textContent =
-    dest == null
-      ? "No later switch is useful right now"
-      : `${people} coming at ${formatTime(dest)} instead of ${formatTime(offset)}`;
-  moveUp.disabled = dest == null || count >= Math.max(0, Math.floor(current.queue));
-  moveDown.disabled = dest == null || count <= 0;
-  moveUp.dataset.from = dest == null ? "" : String(offset);
-  moveUp.dataset.to = dest == null ? "" : String(dest);
-  if (dest == null) {
-    moveNote.textContent = "Switching times will not shorten this wait.";
-  } else if (switched !== count) {
-    moveNote.textContent = `${switched} students already left this peak. This control counts only the ones heading to ${formatTime(dest)}.`;
+  pairLabel.textContent = plan.show
+    ? `${people} coming at ${plan.timeLabel} instead of ${view.timeLabel}`
+    : "No later switch is useful right now";
+  moveUp.disabled = !plan.show || count >= view.inLine;
+  moveDown.disabled = !plan.show || count <= 0;
+  moveUp.dataset.from = plan.show ? String(plan.from) : "";
+  moveUp.dataset.to = plan.show ? String(plan.to) : "";
+
+  const canShorten = plan.show && plan.studentsToBringUnder20 > 0;
+  shortenBtn.disabled = !canShorten;
+  if (canShorten) {
+    shortenBtn.textContent = "Shorten the peak";
+    shortenNote.textContent = `Moves ${plan.studentsToBringUnder20} students to ${plan.timeLabel}. No login. The predicted wait drops below 20 minutes.`;
+  } else if (!plan.show && shown >= 20) {
+    shortenBtn.textContent = "No shorter time";
+    shortenNote.textContent = "No later time brings this wait under 20 minutes.";
   } else {
-    moveNote.textContent =
-      "A tap is anonymous. It records that one student will arrive at the quieter time, and the line in between gets shorter.";
+    shortenBtn.textContent = "Peak is already shorter";
+    shortenNote.textContent = "The predicted wait is already under 20 minutes.";
   }
 
-  const delta = state.lineDelta || 0;
-  const sign = delta > 0 ? "+" : "";
-  counterNote.textContent = `Correction from the card reader: ${sign}${delta}. Swipes in: ${state.joined || 0}. Trays served: ${state.served || 0}.`;
-  paintChart(points, offset, dest);
-  return dest;
+  if (!plan.show) {
+    moveNote.textContent = "Switching times will not shorten this wait.";
+  } else if (view.studentsWhoSwitched !== count) {
+    moveNote.textContent = `${view.studentsWhoSwitched} students already left this peak. This control counts only the ones heading to ${plan.timeLabel}.`;
+  } else {
+    moveNote.textContent = "A tap is anonymous. It records that one student will arrive at the quieter time.";
+  }
+
+  const sign = view.lineDelta > 0 ? "+" : "";
+  counterNote.textContent = `Correction from the card reader: ${sign}${view.lineDelta}. Swipes in: ${view.joined}. Trays served: ${view.served}.`;
+  paintChart(view.points, view.at, dest);
 }
 
-async function refresh() {
-  const response = await fetch("/api/state", { cache: "no-store" });
-  if (!response.ok) throw new Error("state failed");
-  state = await response.json();
+async function loadBoard() {
+  const at = nowOffset;
+  const id = ++requestId;
+  const response = await fetch(`/api/board?at=${at}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("board failed");
+  const view = await response.json();
+  if (id !== requestId || at !== nowOffset) return;
   shared = true;
-  syncEl.textContent = "Shared board on this computer. Anyone with the page sees the same line.";
+  syncEl.textContent = "Shared board for Ridge Hall. No student login.";
+  render(view);
 }
 
 async function post(path, body) {
@@ -211,20 +140,15 @@ async function post(path, body) {
     body: JSON.stringify(body || {}),
   });
   if (!response.ok) throw new Error("update failed");
-  state = await response.json();
-  shared = true;
-  render();
-}
-
-function render() {
-  const points = buildSeries(nowOffset, state.lineDelta || 0, state.moves || {});
-  describe(points, nowOffset);
+  await loadBoard();
 }
 
 clock.addEventListener("input", () => {
   nowOffset = Number(clock.value);
   clockNote.textContent = "";
-  render();
+  loadBoard().catch(() => {
+    syncEl.textContent = "Could not refresh the prediction.";
+  });
 });
 
 document.querySelector("#use-real").addEventListener("click", () => {
@@ -239,23 +163,28 @@ document.querySelector("#use-real").addEventListener("click", () => {
     clockNote.textContent = "";
   }
   clock.value = String(nowOffset);
-  render();
+  loadBoard().catch(() => {
+    syncEl.textContent = "Could not refresh the prediction.";
+  });
+});
+
+shortenBtn.addEventListener("click", () => {
+  if (!board || !board.shorten.show) return;
+  post("/api/shorten", { from: board.shorten.from, to: board.shorten.to }).catch(() => {
+    syncEl.textContent = "Could not shorten the peak.";
+  });
 });
 
 moveUp.addEventListener("click", () => {
   if (moveUp.dataset.from === "" || moveUp.dataset.to === "") return;
-  const from = Number(moveUp.dataset.from);
-  const to = Number(moveUp.dataset.to);
-  post("/api/move", { from, to, delta: 1 }).catch(() => {
+  post("/api/move", { from: Number(moveUp.dataset.from), to: Number(moveUp.dataset.to), delta: 1 }).catch(() => {
     syncEl.textContent = "Could not save that switch.";
   });
 });
 
 moveDown.addEventListener("click", () => {
   if (moveUp.dataset.from === "" || moveUp.dataset.to === "") return;
-  const from = Number(moveUp.dataset.from);
-  const to = Number(moveUp.dataset.to);
-  post("/api/move", { from, to, delta: -1 }).catch(() => {
+  post("/api/move", { from: Number(moveUp.dataset.from), to: Number(moveUp.dataset.to), delta: -1 }).catch(() => {
     syncEl.textContent = "Could not save that switch.";
   });
 });
@@ -278,16 +207,13 @@ document.querySelector("#reset").addEventListener("click", () => {
   });
 });
 
-refresh()
-  .then(render)
-  .catch(() => {
-    syncEl.textContent = "The board server is not running. Start it with python3 server.py.";
-    render();
-  });
+loadBoard().catch(() => {
+  syncEl.textContent = "The board server is not running. Start it with python3 server.py.";
+});
 
 setInterval(() => {
   if (!shared) return;
-  refresh().then(render).catch(() => {
+  loadBoard().catch(() => {
     shared = false;
     syncEl.textContent = "Lost the shared board.";
   });

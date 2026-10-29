@@ -5,7 +5,9 @@ import json
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from threading import Lock
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+from forecast import apply_shorten, board_for
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -48,9 +50,19 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        if urlparse(self.path).path == "/api/state":
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/state":
             with LOCK:
                 self._send(200, load_state())
+            return
+        if parsed.path == "/api/board":
+            raw = parse_qs(parsed.query).get("at", ["70"])[0]
+            try:
+                at = int(raw)
+            except ValueError:
+                at = 70
+            with LOCK:
+                self._send(200, board_for(at, load_state()))
             return
         super().do_GET()
 
@@ -72,6 +84,15 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/served":
                 state["lineDelta"] = int(state["lineDelta"]) - 1
                 state["served"] = int(state["served"]) + 1
+            elif path == "/api/shorten":
+                start = body.get("from")
+                dest = body.get("to")
+                if not isinstance(start, int) or not isinstance(dest, int):
+                    self._send(400, {"error": "Bad shorten."})
+                    return
+                if apply_shorten(state, start, dest) is None:
+                    self._send(400, {"error": "This time cannot be shortened."})
+                    return
             elif path == "/api/move":
                 start = body.get("from")
                 dest = body.get("to")
