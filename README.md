@@ -21,3 +21,7 @@ python3 server.py
 Open http://127.0.0.1:8765
 
 The demo clock starts at 12:10 PM, when the wait is over 20 minutes. Drag it to see the rest of lunch, from 11:00 AM to 2:00 PM.
+
+## Check
+
+The page is Ridge Hall only, and it has no sign-in. At 12:10 PM the wait is over 20 minutes. The shorter-wait card names a later time with a shorter line.
