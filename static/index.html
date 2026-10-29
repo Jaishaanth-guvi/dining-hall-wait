@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ridge Hall lunch line</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="top">
+        <div>
+          <p class="eyebrow">Ridge Hall · lunch</p>
+          <h1>Wait board</h1>
+        </div>
+        <p class="public">Public screen. No student login.</p>
+      </header>
+
+      <section class="hero" aria-live="polite">
+        <div>
+          <p class="eyebrow" id="when-label">Today at 12:10 PM</p>
+          <p class="wait">
+            <span id="wait-value">—</span>
+            <span class="unit">min</span>
+          </p>
+          <p class="status" id="wait-status">Checking the line…</p>
+        </div>
+        <dl class="facts">
+          <div>
+            <dt>In line now</dt>
+            <dd id="line-count">—</dd>
+          </div>
+          <div>
+            <dt>Serving speed</dt>
+            <dd>18<span> / min</span></dd>
+          </div>
+          <div>
+            <dt>Students who switched</dt>
+            <dd id="moved-count">0</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="card chart-card">
+        <div class="card-head">
+          <h2>Today’s lunch line</h2>
+          <p class="legend">
+            <span class="swatch long"></span> Predicted wait
+            <span class="swatch ok"></span> Quieter time
+          </p>
+        </div>
+        <svg id="chart" viewBox="0 0 720 220" role="img" aria-labelledby="chart-title">
+          <title id="chart-title">Predicted wait from 11:00 AM to 2:00 PM</title>
+        </svg>
+        <div class="clock">
+          <label for="clock">Demo clock</label>
+          <input id="clock" type="range" min="0" max="180" value="70" />
+          <div class="clock-ends">
+            <span>11:00</span>
+            <span id="clock-readout">12:10 PM</span>
+            <span>2:00</span>
+          </div>
+          <button type="button" id="use-real" class="text-btn">Use the actual clock</button>
+          <p class="hint" id="clock-note"></p>
+        </div>
+      </section>
+
+      <section class="split">
+        <article class="card">
+          <h2>Shorter wait</h2>
+          <p class="advice" id="advice">Looking for a quieter time…</p>
+          <div class="stepper">
+            <button type="button" id="move-down" aria-label="One fewer student switches">−</button>
+            <strong id="pair-count">0</strong>
+            <button type="button" id="move-up" aria-label="One more student switches">+</button>
+          </div>
+          <p class="pair-label" id="pair-label">students coming later</p>
+          <p class="hint" id="move-note">
+            A tap is anonymous. It only records that one student will arrive at the quieter time.
+          </p>
+        </article>
+
+        <article class="card">
+          <h2>Meal-card counter</h2>
+          <p class="advice">
+            Ridge Hall already swipes cards at the door. Use that count to correct the forecast. Students do not install anything or sign in.
+          </p>
+          <div class="counter-actions">
+            <button type="button" id="join">Card swiped in</button>
+            <button type="button" id="served" class="secondary">Tray served</button>
+          </div>
+          <p class="hint" id="counter-note">Correction: 0</p>
+          <button type="button" id="reset" class="text-btn">Reset the demo</button>
+        </article>
+      </section>
+
+      <p class="foot" id="sync">Connecting…</p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
